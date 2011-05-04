@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import glob, os
 import nbt
@@ -133,16 +133,23 @@ class Level(object):
 
     def __init__(self, level_file):
         self.level_file = level_file
+        self.is_McRegion = False
+
         try:
             self.level_file = nbt.NBTFile(self.level_file, 'rb')
             #do something here to checkout the level file?
         except IOError, err:
             #should probably do something more worthwhile here
             raise err
+
         self.level_dir = os.path.dirname(level_file)
+        chunk_files = glob.glob(os.path.join(self.level_dir, '*', '*', 'c.*.*.dat'))
+        if len(chunk_files) == 0:
+            self.is_McRegion = True
+            chunk_files = glob.glob(os.path.join(self.level_dir, 'region', 'r.*.*.mcr'))
         self.chunk_files = sorted(
             sorted(
-                glob.glob(os.path.join(self.level_dir, '*', '*', 'c.*.*.dat')),
+                chunk_files,
                 key=lambda chunk_file: int(os.path.basename(chunk_file).split('.')[1],36)
             ),
             key=lambda chunk_file: int(os.path.basename(chunk_file).split('.')[2],36)
