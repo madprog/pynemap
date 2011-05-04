@@ -141,7 +141,7 @@ class TAG_String(TAG):
 			
 	#Printing and Formatting of tree
 	def __repr__(self):
-		return self.value
+		return repr(self.value)
 		
 class TAG_List(TAG):
 	id = TAG_LIST
