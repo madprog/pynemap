@@ -166,8 +166,16 @@ class Level(object):
             'z_min':0,
             'z_max':0,
         })
-        chunks_xpos = map(lambda chunk_file: int(os.path.basename(chunk_file).split('.')[1],36), self.chunk_files)
-        chunks_zpos = map(lambda chunk_file: int(os.path.basename(chunk_file).split('.')[2],36), self.chunk_files)
+        if self.is_McRegion:
+            chunks_pos = list()
+            for chunk_file in chunk_files:
+                region_pos = os.path.basename(chunk_file).split('.')
+                region_x, region_z = int(region_pos[1]) * 32, int(region_pos[2]) * 32
+                chunks_pos += map(lambda chunk: (region_x + chunk['Level']['xPos'].value, region_z + chunk['Level']['zPos'].value), region_chunks(chunk_file))
+            chunks_xpos, chunks_zpos = zip(*chunks_pos)
+        else:
+            chunks_xpos = map(lambda chunk_file: int(os.path.basename(chunk_file).split('.')[1],36), self.chunk_files)
+            chunks_zpos = map(lambda chunk_file: int(os.path.basename(chunk_file).split('.')[2],36), self.chunk_files)
         self.level_size['x_min'] = min(chunks_xpos)
         self.level_size['x_max'] = max(chunks_xpos)
         self.level_size['z_min'] = min(chunks_zpos)
@@ -440,7 +448,7 @@ if __name__ == '__main__':
 
         pool = multiprocessing.Pool(options['processes'], _init_multiprocess, (image_array,))
         if options['verbose']: print 'Rendering...'
-        if False:
+        if True: # Switch multiprocessing on (True) or off (False)
             pool.map(render_modes[options['render-mode']][level.is_McRegion], map(_get_chunk_args, level.chunk_files), level.chunk_count/options['processes'])
         else:
             for args in map(_get_chunk_args, level.chunk_files):
