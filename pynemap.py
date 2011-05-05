@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 
-import glob, os
-import nbt
-import numpy, shmem
-import multiprocessing
+import glob
+import gzip
 import itertools
+import multiprocessing
+import nbt
+import numpy
+import os
+import shmem
+import StringIO
+import struct
 
 def _topographic_values(k):
     if k == 8 or k == 9:
@@ -177,8 +182,44 @@ class Level(object):
     def __str__(self):
         return 'Name: %s, Chunks: %i, Size: %s' % (os.path.basename(self.level_dir), self.chunk_count, str(self.level_size))
 
-def render_overhead_chunk((chunk_file, map_size, render_options)):
-    chunk = nbt.NBTFile(chunk_file, 'rb')
+_1024_UINT32_STRUCT = struct.Struct('!1024I')
+UINT32_STRUCT = struct.Struct('!I')
+
+def bytes_to_location_and_size(n):
+    # Locations are stored on the first 3 bytes
+    # Last byte is the size of the chunk
+    # Additionnally, sizes are given in 4KiB sector count
+    location = (int(n) >> 8) << 12
+    size = (int(n) & 0xff) << 12
+    return location, size
+
+def region_chunks(chunk_region_file):
+    chunk_region = file(chunk_region_file, 'rb')
+
+    # Read where each chunk is
+    locations_and_sizes = _1024_UINT32_STRUCT.unpack(chunk_region.read(_1024_UINT32_STRUCT.size))
+
+    # Now convert them to (location, size) tuples
+    locations_and_sizes = map(bytes_to_location_and_size, locations_and_sizes)
+
+    for location, size_ in locations_and_sizes:
+        if location and size_:
+            chunk_region.seek(location)
+            size = UINT32_STRUCT.unpack(chunk_region.read(UINT32_STRUCT.size))[0] - 1
+            compression_type = ord(chunk_region.read(1))
+            data = chunk_region.read(size).decode('zlib') + '\0'
+            nbt_ = nbt.NBTFile()
+            nbt_.parse_file(file=StringIO.StringIO(data))
+            yield nbt_
+
+def render_overhead_chunk_file((chunk_file, map_size, render_options)):
+    _render_overhead_chunk(nbt.NBTFile(chunk_file, 'rb'), map_size, render_options)
+
+def render_overhead_chunk_region((chunk_region_file, map_size, render_options)):
+    for chunk in region_chunks(chunk_region_file):
+        _render_overhead_chunk(chunk, map_size, render_options)
+
+def _render_overhead_chunk(chunk, map_size, render_options):
     array_offset_X = (abs(map_size['x_min']) + chunk['Level']['xPos'].value) * Level.chunk_size_X
     array_offset_Z = (abs(map_size['z_min']) + chunk['Level']['zPos'].value) * Level.chunk_size_Z
 
@@ -196,7 +237,13 @@ def render_overhead_chunk((chunk_file, map_size, render_options)):
         print 'Failed chunk: %s' % err
 
 def render_oblique_chunk((chunk_file, map_size, render_options)):
-    chunk = nbt.NBTFile(chunk_file, 'rb')
+    _render_oblique_chunk(nbt.NBTFile(chunk_file, 'rb'), map_size, render_options)
+
+def render_oblique_chunk_region((chunk_region_file, map_size, render_options)):
+    for chunk in region_chunks(chunk_region_file):
+        _render_oblique_chunk(chunk, map_size, render_options)
+
+def _render_oblique_chunk(chunk, map_size, render_options):
     array_offset_X = (abs(map_size['x_min']) + chunk['Level']['xPos'].value) * Level.chunk_size_X
     array_offset_Z = (abs(map_size['z_min']) + chunk['Level']['zPos'].value) * Level.chunk_size_Z
 
@@ -219,8 +266,14 @@ def render_oblique_chunk((chunk_file, map_size, render_options)):
     except IndexError, err:
         print 'Failed chunk: %s' % err
 
-def render_topographic_chunk((chunk_file, map_size, render_options)):
-    chunk = nbt.NBTFile(chunk_file, 'rb')
+def render_topographic_chunk_file((chunk_file, map_size, render_options)):
+    _render_topographic_chunk(nbt.NBTFile(chunk_file, 'rb'), map_size, render_options)
+
+def render_topographic_chunk_region((chunk_region_file, map_size, render_options)):
+    for chunk in region_chunks(chunk_region_file):
+        _render_topographic_chunk(chunk, map_size, render_options)
+
+def _render_topographic_chunk(chunk, map_size, render_options):
     array_offset_X = (abs(map_size['x_min']) + chunk['Level']['xPos'].value) * Level.chunk_size_X
     array_offset_Z = (abs(map_size['z_min']) + chunk['Level']['zPos'].value) * Level.chunk_size_Z
 
@@ -308,11 +361,11 @@ def overlay_pixel(src, dst):
         dtype=numpy.uint8)
     return pixel
 
-render_modes = dict({
-    'overhead':     render_overhead_chunk,
-    #'oblique':      render_oblique_chunk,
-    'topographic':  render_topographic_chunk,
-})
+render_modes = {
+    'overhead':     { False: render_overhead_chunk_file,    True: render_overhead_chunk_region },
+    #'oblique':      { False: render_oblique_chunk_file,     True: render_oblique_chunk_region },
+    'topographic':  { False: render_topographic_chunk_file, True: render_topographic_chunk_region },
+}
 
 if __name__ == '__main__':
     import getopt, sys
@@ -387,7 +440,11 @@ if __name__ == '__main__':
 
         pool = multiprocessing.Pool(options['processes'], _init_multiprocess, (image_array,))
         if options['verbose']: print 'Rendering...'
-        pool.map(render_modes[options['render-mode']], map(_get_chunk_args, level.chunk_files), level.chunk_count/options['processes'])
+        if False:
+            pool.map(render_modes[options['render-mode']][level.is_McRegion], map(_get_chunk_args, level.chunk_files), level.chunk_count/options['processes'])
+        else:
+            for args in map(_get_chunk_args, level.chunk_files):
+                render_modes[options['render-mode']][level.is_McRegion](args)
         #for x in range(5): render_oblique_chunk((level.chunk_files[x], level.level_size, render_options))
         Image.fromarray(image_array, 'RGBA').save(options['output-file'])
 

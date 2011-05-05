@@ -260,7 +260,7 @@ class NBTFile(TAG_Compound):
 				name = TAG_String(buffer=file)
 				self._parse_buffer(file)
 				self.name = name
-				self.file.close()
+				file.close()
 			else:
 				raise ValueError("First record is not a Compound Tag")
 
